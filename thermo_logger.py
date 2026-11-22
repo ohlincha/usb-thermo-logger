@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Reader and logger for PCsensor TEMPer USB thermometers / hygrometers (stdlib only).
+"""USB Thermo Logger: reader and logger for PCsensor TEMPer-compatible USB thermometers / hygrometers
+(stdlib only). TEMPer is a trademark of PCsensor; this project is not affiliated with PCsensor.
 
 Supported (USB vendor 0c45):
   7401  TEMPer        temperature
@@ -11,19 +12,20 @@ second one for commands). A reading is the 8-byte command 01 80 33 01 00 00 00 0
 on the second interface; the 8-byte reply holds big-endian values from byte 2.
 
 Usage:
-  python3 temper.py list
-  python3 temper.py read                 # one reading of every sensor
-  python3 temper.py log -i 10 -o log.csv # every 10 s until Ctrl-C
+  python3 thermo_logger.py list
+  python3 thermo_logger.py read                 # one reading of every sensor
+  python3 thermo_logger.py log -i 10 -o log.csv # every 10 s until Ctrl-C
 """
 
 import argparse
 import csv
 import datetime
+import json
 import os
 import sys
 import time
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 VID = 0x0C45
 CMD_READ = bytes([0x01, 0x80, 0x33, 0x01, 0x00, 0x00, 0x00, 0x00])
@@ -122,7 +124,7 @@ class LinuxHid:
             raise HidError(
                 f"Permission denied opening {path}.\n"
                 "Install the udev rule once (see README):\n"
-                "  sudo cp 70-temper.rules /etc/udev/rules.d/ && sudo udevadm control --reload\n"
+                "  sudo cp 70-usb-thermo-logger.rules /etc/udev/rules.d/ && sudo udevadm control --reload\n"
                 "then unplug/replug the sensor.")
         self.path = path
 
@@ -424,23 +426,85 @@ def backend():
 
 
 # --------------------------------------------------------------------------
+# Settings: per-sensor name and offsets, keyed by model and USB port (the sensors have no serial number)
+# --------------------------------------------------------------------------
+
+APP_ID = "usb-thermo-logger"
+
+
+def config_dir():
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, APP_ID)
+
+
+class Settings:
+    def __init__(self, path=None):
+        self.path = path or os.path.join(config_dir(), "sensors.json")
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                self.data = json.load(fh)
+        except (OSError, ValueError):
+            self.data = {}
+
+    def get(self, key):
+        d = self.data.get(key, {})
+        return {"name": d.get("name", ""), "temperature_offset": float(d.get("temperature_offset", 0.0)),
+                "humidity_offset": float(d.get("humidity_offset", 0.0))}
+
+    def set(self, key, **values):
+        d = self.data.setdefault(key, {})
+        d.update(values)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self.data, fh, indent=2, ensure_ascii=False)
+        os.replace(tmp, self.path)
+
+
+# --------------------------------------------------------------------------
 # Sensors
 # --------------------------------------------------------------------------
 
 class Sensor:
-    def __init__(self, info):
+    def __init__(self, info, settings=None):
         self.info = info
         self.pid = info["pid"]
         self.model = MODELS.get(self.pid, f"0c45:{self.pid:04x}")
-        self.label = f"{self.model} ({info['location']})"
+        self.key = f"{self.pid:04x}@{info['location']}"      # settings key: model and USB port
+        self.settings = settings
         self.hid = backend()(info["path"])
         self.last_raw = b""
+        self.last_uncorrected = {}
+
+    @property
+    def config(self):
+        if self.settings:
+            return self.settings.get(self.key)
+        return {"name": "", "temperature_offset": 0.0, "humidity_offset": 0.0}
+
+    @property
+    def label(self):
+        name = self.config["name"] if self.settings else ""
+        return name or f"{self.model} ({self.info['location']})"
 
     def read(self):
-        """One reading: dict of quantities; also keeps the raw reply in last_raw."""
+        """One reading with the sensor's offsets applied; keeps the reply (last_raw) and the uncorrected values."""
         reply = self.hid.transfer(CMD_READ)
         self.last_raw = reply
-        return decode(self.pid, reply)
+        q = decode(self.pid, reply)
+        self.last_uncorrected = dict(q)
+        if self.settings:
+            c = self.config
+            if "temperature" in q and c["temperature_offset"]:
+                q["temperature"] = round(q["temperature"] + c["temperature_offset"], 2)
+            if "humidity" in q and c["humidity_offset"]:
+                q["humidity"] = round(max(0.0, min(100.0, q["humidity"] + c["humidity_offset"])), 2)
+        return q
 
     def close(self):
         self.hid.close()
@@ -450,11 +514,12 @@ def find_sensors():
     return backend().enumerate()
 
 
-def open_all():
+def open_all(settings=None):
     sensors, errors = [], []
+    settings = settings if settings is not None else Settings()
     for info in find_sensors():
         try:
-            sensors.append(Sensor(info))
+            sensors.append(Sensor(info, settings))
         except HidError as e:
             errors.append(str(e))
     return sensors, errors
@@ -474,12 +539,17 @@ def iso_time(t):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="PCsensor TEMPer reader/logger")
-    ap.add_argument("--version", action="version", version=f"temper {__version__}")
+    ap = argparse.ArgumentParser(description="USB Thermo Logger: reader/logger for TEMPer-compatible USB sensors")
+    ap.add_argument("--version", action="version", version=f"thermo-logger {__version__}")
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("list", help="list sensors")
     r = sub.add_parser("read", help="one reading of every sensor")
     r.add_argument("--raw", action="store_true", help="also print the reply bytes")
+    o = sub.add_parser("set", help="name a sensor or set its offsets (see 'list' for the keys)")
+    o.add_argument("key", help="sensor key from 'list', e.g. 7401@1-7.2")
+    o.add_argument("--name")
+    o.add_argument("--temperature-offset", type=float, help="°C added to the reading")
+    o.add_argument("--humidity-offset", type=float, help="%%RH added to the reading")
     lg = sub.add_parser("log", help="log every sensor until Ctrl-C")
     lg.add_argument("-i", "--interval", type=float, default=10.0, help="seconds between readings (default 10)")
     lg.add_argument("-o", "--output", help="CSV file (default: stdout)")
@@ -488,17 +558,32 @@ def main(argv=None):
 
     if cmd == "list":
         found = find_sensors()
+        st = Settings()
         for info in found:
-            print(f"{MODELS.get(info['pid'], '?'):22s} 0c45:{info['pid']:04x}  {info['location']}  {info['path']}")
+            key = f"{info['pid']:04x}@{info['location']}"
+            c = st.get(key)
+            extra = "".join([f"  name '{c['name']}'" if c["name"] else "",
+                             f"  T offset {c['temperature_offset']:+g} °C" if c["temperature_offset"] else "",
+                             f"  RH offset {c['humidity_offset']:+g} %" if c["humidity_offset"] else ""])
+            print(f"{MODELS.get(info['pid'], '?'):22s} key {key:14s} {info['path']}{extra}")
         if not found:
-            print("no TEMPer sensors found")
+            print("no sensors found")
+        print(f"settings: {st.path}")
+        return 0
+    if cmd == "set":
+        vals = {k: v for k, v in (("name", a.name), ("temperature_offset", a.temperature_offset),
+                                  ("humidity_offset", a.humidity_offset)) if v is not None}
+        if not vals:
+            ap.error("nothing to set: give --name, --temperature-offset or --humidity-offset")
+        Settings().set(a.key, **vals)
+        print(f"{a.key}: {vals}")
         return 0
 
     sensors, errors = open_all()
     for e in errors:
         print("error:", e, file=sys.stderr)
     if not sensors:
-        print("no TEMPer sensors could be opened", file=sys.stderr)
+        print("no sensors could be opened", file=sys.stderr)
         return 1
     try:
         if cmd == "read":

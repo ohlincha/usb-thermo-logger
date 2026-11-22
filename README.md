@@ -1,7 +1,10 @@
-# TEMPer Monitor
+# USB Thermo Logger
 
-Live display, plot and CSV logging for **PCsensor TEMPer** USB thermometers and hygrometers, on Windows,
-macOS and Linux. Pure Python standard library (Tk GUI); no drivers or packages to install.
+Live display, plot and CSV logging for **PCsensor TEMPer-compatible** USB thermometers and hygrometers, on
+Windows, macOS and Linux. Pure Python standard library (Tk GUI); no drivers or packages to install.
+
+*TEMPer is a trademark of PCsensor. This project is independent and not affiliated with or endorsed by
+PCsensor; the name is used only to describe compatible hardware.*
 
 | USB ID | Device | Firmware (USB product string) | Reads |
 |---|---|---|---|
@@ -14,14 +17,14 @@ foot pedals.
 
 ## Install
 
-Installers are attached to each [release](https://github.com/ohlincha/temper-monitor/releases):
+Installers are attached to each [release](https://github.com/ohlincha/usb-thermo-logger/releases):
 
-- **Windows:** `TemperMonitor.exe` (GUI) and `temper-cli.exe` (command line). Uses Windows' own HID driver.
-- **macOS:** `TemperMonitor-macOS.dmg`: drag *TEMPer Monitor* to Applications. The app is not notarised: the
+- **Windows:** `ThermoLogger.exe` (GUI) and `thermo-logger-cli.exe` (command line). Uses Windows' own HID driver.
+- **macOS:** `UsbThermoLogger-macOS.dmg`: drag *USB Thermo Logger* to Applications. The app is not notarised: the
   first time, right-click it and choose **Open** (macOS 15: System Settings → Privacy & Security → Open Anyway).
-- **Linux (Debian/Ubuntu):** `sudo apt install ./temper-monitor_<version>_all.deb` (installs a udev rule, so
-  no root is needed; replug the sensors afterwards). Other distributions: run `temper_gui.py` with Python 3 and
-  Tk, and install the rule: `sudo cp 70-temper.rules /etc/udev/rules.d/ && sudo udevadm control --reload`.
+- **Linux (Debian/Ubuntu):** `sudo apt install ./usb-thermo-logger_<version>_all.deb` (installs a udev rule, so
+  no root is needed; replug the sensors afterwards). Other distributions: run `thermo_logger_gui.py` with Python 3
+  and Tk, and install the rule: `sudo cp 70-usb-thermo-logger.rules /etc/udev/rules.d/ && sudo udevadm control --reload`.
 
 ## Use
 
@@ -30,12 +33,19 @@ axis) and humidity (right axis, dashed) over time. Set the reading interval, the
 **Log to CSV…** to write every reading to a file (`time, sensor, temperature_C, humidity_pct, raw`).
 Sensors are told apart by their USB port.
 
+**Names and offsets:** double-click a sensor to give it a name and a temperature or humidity offset (saved per
+model and USB port). *Match temperature to* sets the offset so the sensor reads the same as a reference sensor
+right now; let both settle side by side first. The plain TEMPer (0c45:7401) has its sensor inside the stick next
+to its microcontroller and warms itself by a few °C (ours: about +3.5 °C after a few minutes in a USB hub):
+a short USB extension cable away from the computer reduces this; an offset corrects the rest.
+
 Command line:
 
 ```
-temper list                    # sensors found
-temper read --raw              # one reading of each, with the reply bytes
-temper log -i 10 -o log.csv    # every 10 s until Ctrl-C
+thermo-logger-cli list                    # sensors found, with their keys and offsets
+thermo-logger-cli read --raw              # one reading of each, with the reply bytes
+thermo-logger-cli log -i 10 -o log.csv    # every 10 s until Ctrl-C
+thermo-logger-cli set 7401@1-7.2 --name Bench --temperature-offset -3.5
 ```
 
 ## Protocol

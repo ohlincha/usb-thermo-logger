@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TEMPer Monitor: live display, plot and CSV logging for PCsensor TEMPer sensors (stdlib only, Tk)."""
+"""USB Thermo Logger: live display, plot and CSV logging for TEMPer-compatible USB sensors (stdlib only, Tk)."""
 
 import csv
 import os
@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import temper as tp  # noqa: E402
+import thermo_logger as tp  # noqa: E402
 
 COLOURS = ["#1f4e79", "#b5543c", "#3c8d6e", "#c8892a", "#6a4c93", "#2a7f9e", "#9c3d5a"]
 SPANS = {"10 min": 600, "1 h": 3600, "6 h": 21600, "24 h": 86400, "all": None}
@@ -20,9 +20,10 @@ SPANS = {"10 min": 600, "1 h": 3600, "6 h": 21600, "24 h": 86400, "all": None}
 class Reader(threading.Thread):
     """Reads every sensor at the set interval (all HID access on this thread) and puts results on a queue."""
 
-    def __init__(self, out):
+    def __init__(self, out, settings):
         super().__init__(daemon=True)
         self.out = out
+        self.settings = settings
         self.interval = 10.0
         self.stop_flag = threading.Event()
         self.rescan_flag = threading.Event()
@@ -36,17 +37,18 @@ class Reader(threading.Thread):
                 self.rescan_flag.clear()
                 for s in self.sensors:
                     s.close()
-                self.sensors, errors = tp.open_all()
-                self.out.put(("sensors", [s.label for s in self.sensors], errors))
+                self.sensors, errors = tp.open_all(self.settings)
+                self.out.put(("sensors", [(s.key, s.label, s.pid) for s in self.sensors], errors))
                 next_t = 0.0
             now = time.time()
             if now >= next_t:
                 next_t = now + self.interval
                 for s in self.sensors:
                     try:
-                        self.out.put(("reading", s.label, now, s.read(), s.last_raw.hex(" ")))
+                        q = s.read()
+                        self.out.put(("reading", s.key, now, q, s.last_raw.hex(" "), dict(s.last_uncorrected)))
                     except tp.HidError as e:
-                        self.out.put(("error", s.label, now, str(e)))
+                        self.out.put(("error", s.key, now, str(e)))
             self.stop_flag.wait(0.2)
         for s in self.sensors:
             s.close()
@@ -55,15 +57,19 @@ class Reader(threading.Thread):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title(f"TEMPer Monitor {tp.__version__}")
+        root.title(f"USB Thermo Logger {tp.__version__}")
         root.geometry("1000x640")
         root.minsize(760, 480)
         self.q = queue.Queue()
-        self.data = {}            # label -> list of (t, temperature, humidity)
-        self.rows = {}            # label -> treeview item
+        self.settings = tp.Settings()
+        self.data = {}            # key -> list of (t, temperature, humidity)
+        self.rows = {}            # key -> treeview item
+        self.labels = {}          # key -> display name
+        self.pids = {}            # key -> USB product id
+        self.latest = {}          # key -> uncorrected latest values
         self.logfile = None
         self.writer = None
-        self.reader = Reader(self.q)
+        self.reader = Reader(self.q, self.settings)
         self._build()
         self.reader.start()
         root.protocol("WM_DELETE_WINDOW", self.quit)
@@ -102,6 +108,9 @@ class App:
             self.tree.heading(c, text=title)
             self.tree.column(c, width=w, anchor="e" if c != "raw" else "w")
         self.tree.pack(fill="x", padx=8)
+        self.tree.bind("<Double-1>", self.edit_sensor)
+        ttk.Label(self.root, text="Double-click a sensor to name it or set an offset.", foreground="#666",
+                  padding=(8, 2, 0, 0)).pack(anchor="w")
         big = ("TkDefaultFont", 11)
         ttk.Style().configure("Treeview", font=big, rowheight=24)
 
@@ -118,6 +127,79 @@ class App:
         except (tk.TclError, ValueError):
             pass
 
+    def row_text(self, key):
+        c = self.settings.get(key)
+        off = []
+        if c["temperature_offset"]:
+            off.append(f"{c['temperature_offset']:+g} °C")
+        if c["humidity_offset"]:
+            off.append(f"{c['humidity_offset']:+g} %RH")
+        return self.labels.get(key, key) + (f"   [offset {', '.join(off)}]" if off else "")
+
+    def edit_sensor(self, event):
+        key = self.tree.identify_row(event.y)
+        if not key or key not in self.labels:
+            return
+        c = self.settings.get(key)
+        has_hum = self.pids.get(key) == 0x7402
+        win = tk.Toplevel(self.root)
+        win.title("Sensor settings")
+        win.transient(self.root)
+        win.resizable(False, False)
+        f = ttk.Frame(win, padding=12)
+        f.pack(fill="both", expand=True)
+        model = tp.MODELS.get(self.pids.get(key), "")
+        ttk.Label(f, text=f"{model}, USB port {key.split('@', 1)[-1]}", foreground="#666").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        name = tk.StringVar(value=c["name"])
+        toff = tk.StringVar(value=f"{c['temperature_offset']:g}")
+        hoff = tk.StringVar(value=f"{c['humidity_offset']:g}")
+        ttk.Label(f, text="Name").grid(row=1, column=0, sticky="w")
+        ttk.Entry(f, textvariable=name, width=28).grid(row=1, column=1, columnspan=2, sticky="we", pady=2)
+        ttk.Label(f, text="Temperature offset (°C)").grid(row=2, column=0, sticky="w")
+        ttk.Entry(f, textvariable=toff, width=10).grid(row=2, column=1, sticky="w", pady=2)
+        if has_hum:
+            ttk.Label(f, text="Humidity offset (%RH)").grid(row=3, column=0, sticky="w")
+            ttk.Entry(f, textvariable=hoff, width=10).grid(row=3, column=1, sticky="w", pady=2)
+        others = [k for k in self.labels if k != key and "temperature" in self.latest.get(k, {})]
+        if others and "temperature" in self.latest.get(key, {}):
+            ttk.Label(f, text="Match temperature to").grid(row=4, column=0, sticky="w", pady=(8, 0))
+            ref = tk.StringVar(value=self.labels[others[0]])
+            ttk.Combobox(f, values=[self.labels[k] for k in others], textvariable=ref, state="readonly",
+                         width=24).grid(row=4, column=1, sticky="w", pady=(8, 0))
+
+            def match():
+                rk = next(k for k in others if self.labels[k] == ref.get())
+                rc = self.settings.get(rk)
+                target = self.latest[rk]["temperature"] + rc["temperature_offset"]   # reference as displayed
+                toff.set(f"{target - self.latest[key]['temperature']:.2f}")
+            ttk.Button(f, text="Set offset", command=match).grid(row=4, column=2, sticky="w", padx=(6, 0),
+                                                                  pady=(8, 0))
+            ttk.Label(f, text="Sets the offset so this sensor reads the same as the reference now\n"
+                              "(let both settle in the same place first).", foreground="#666").grid(
+                row=5, column=0, columnspan=3, sticky="w")
+
+        def save():
+            try:
+                t, h = float(toff.get() or 0), float(hoff.get() or 0)
+            except ValueError:
+                messagebox.showerror("Sensor settings", "Offsets must be numbers.", parent=win)
+                return
+            self.settings.set(key, name=name.get().strip(), temperature_offset=t, humidity_offset=h)
+            self.labels[key] = name.get().strip() or f"{model} ({key.split('@', 1)[-1]})"
+            self.tree.item(key, text=self.row_text(key))
+            win.destroy()
+            self.redraw()
+        b = ttk.Frame(f)
+        b.grid(row=6, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(b, text="Cancel", command=win.destroy).pack(side="right")
+        ttk.Button(b, text="Save", command=save).pack(side="right", padx=6)
+        try:                                    # modal once it is on screen (grab fails before that on X11)
+            win.wait_visibility()
+            win.grab_set()
+        except tk.TclError:
+            pass
+
     def clear(self):
         for k in self.data:
             self.data[k] = []
@@ -131,7 +213,7 @@ class App:
             self.loglabel.configure(text="not logging")
             return
         path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")],
-                                            initialfile=time.strftime("temper_%Y%m%d_%H%M.csv"))
+                                            initialfile=time.strftime("thermo_%Y%m%d_%H%M.csv"))
         if not path:
             return
         new = not os.path.exists(path) or os.path.getsize(path) == 0
@@ -158,23 +240,28 @@ class App:
                 break
             kind = msg[0]
             if kind == "sensors":
-                _, labels, errors = msg
+                _, found, errors = msg
                 for item in self.tree.get_children():
                     self.tree.delete(item)
-                self.rows = {lab: self.tree.insert("", "end", text=lab, values=("—", "—", "", "")) for lab in labels}
-                for lab in labels:
-                    self.data.setdefault(lab, [])
+                self.rows = {}
+                for key, lab, pid in found:
+                    self.labels[key], self.pids[key] = lab, pid
+                    self.rows[key] = self.tree.insert("", "end", iid=key, text=self.row_text(key),
+                                                      values=("—", "—", "", ""))
+                    self.data.setdefault(key, [])
+                labels = [f[1] for f in found]
                 txt = f"{len(labels)} sensor(s)"
                 if errors:
                     txt += "  ·  " + " | ".join(e.splitlines()[0] for e in errors)
                     if sys.platform.startswith("linux") and any("Permission" in e for e in errors):
-                        messagebox.showwarning("TEMPer Monitor", errors[0])
+                        messagebox.showwarning("USB Thermo Logger", errors[0])
                 if not labels and not errors:
-                    txt = "No TEMPer sensors found: plug one in and press Rescan sensors."
+                    txt = "No sensors found: plug one in and press Rescan sensors."
                 self.status.configure(text=txt)
                 changed = True
             elif kind == "reading":
-                _, lab, t, qd, raw = msg
+                _, lab, t, qd, raw, unc = msg
+                self.latest[lab] = unc
                 temp, hum = qd.get("temperature"), qd.get("humidity")
                 self.data.setdefault(lab, []).append((t, temp, hum))
                 if lab in self.rows:
@@ -182,7 +269,7 @@ class App:
                         f"{temp:.2f}" if temp is not None else "—", f"{hum:.1f}" if hum is not None else "—",
                         time.strftime("%H:%M:%S", time.localtime(t)), raw))
                 if self.writer:
-                    self.writer.writerow([tp.iso_time(t), lab, "" if temp is None else temp,
+                    self.writer.writerow([tp.iso_time(t), self.labels.get(lab, lab), "" if temp is None else temp,
                                           "" if hum is None else hum, raw])
                     self.logfile.flush()
                 changed = True
@@ -192,7 +279,7 @@ class App:
                     vals = list(self.tree.item(self.rows[lab], "values"))
                     vals[2] = "error"
                     self.tree.item(self.rows[lab], values=vals)
-                self.status.configure(text=f"{lab}: {err}")
+                self.status.configure(text=f"{self.labels.get(lab, lab)}: {err}")
         if changed:
             self.redraw()
         self.root.after(250, self.poll)
@@ -249,7 +336,7 @@ class App:
                                                               time.localtime(t)), fill="#555")
         legend_y = T + 8
         names = sorted(series)
-        lw = max(len(n) for n in names) * 7 + 150
+        lw = max(len(self.labels.get(n, n)) for n in names) * 7 + 150
         legend = []
         for n, (lab, v) in enumerate(sorted(series.items())):
             col = COLOURS[n % len(COLOURS)]
@@ -261,7 +348,7 @@ class App:
                 c.create_oval(px - 3, py - 3, px + 3, py + 3, fill=col, outline=col)
             if len(hp_) > 1:
                 c.create_line(*[q for pt in hp_ for q in pt], fill=col, width=1, dash=(4, 3))
-            legend.append((col, lab + ("  (dashed: %RH)" if hp_ else "")))
+            legend.append((col, self.labels.get(lab, lab) + ("  (dashed: %RH)" if hp_ else "")))
         c.create_rectangle(L + 4, T + 1, L + 4 + lw, T + 4 + 16 * len(names), fill="white", outline="#ddd")
         for col, text in legend:
             c.create_line(L + 10, legend_y, L + 30, legend_y, fill=col, width=2)

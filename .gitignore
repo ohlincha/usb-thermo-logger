@@ -3,3 +3,5 @@ build/
 dist/
 *.spec
 *.csv
+Oscilloscope-development/
+Oscilloscope-development.zip

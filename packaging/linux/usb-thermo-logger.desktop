@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=USB Thermo Logger
+Comment=Live display and logging for TEMPer-compatible USB thermometers and hygrometers
+Exec=thermo-logger
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Science;Utility;
