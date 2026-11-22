@@ -1,0 +1,78 @@
+name: Build installers
+
+# Builds on every push/PR; pushing a tag like v1.0.0 also publishes a GitHub release
+# with the Windows .exe, macOS .dmg and Linux .deb attached.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m unittest discover -s tests -v
+
+  linux:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: packaging/linux/build_deb.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: linux-deb, path: dist/*.deb }
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyinstaller
+      - run: pyinstaller --noconfirm --onefile --windowed --name TemperMonitor temper_gui.py
+      - run: pyinstaller --noconfirm --onefile --console --name temper-cli temper.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: |
+            dist/TemperMonitor.exe
+            dist/temper-cli.exe
+
+  macos:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyinstaller
+      - run: |
+          pyinstaller --noconfirm --windowed --name "TEMPer Monitor" \
+            --osx-bundle-identifier io.github.ohlincha.temper-monitor temper_gui.py
+          mkdir -p dmg && cp -R "dist/TEMPer Monitor.app" dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname "TEMPer Monitor" -srcfolder dmg -ov -format UDZO dist/TemperMonitor-macOS.dmg
+      - uses: actions/upload-artifact@v4
+        with: { name: macos-dmg, path: dist/TemperMonitor-macOS.dmg }
+
+  release:
+    # Publish whatever built, even if a platform job failed (e.g. macOS runner
+    # capacity); re-running the failed job later re-runs this one and adds its file.
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && needs.linux.result == 'success' }}
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true

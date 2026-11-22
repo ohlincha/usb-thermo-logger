@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=TEMPer Monitor
+Comment=Live display and logging for TEMPer USB thermometers and hygrometers
+Exec=temper-monitor
+Icon=utilities-system-monitor
+Terminal=false
+Categories=Science;Utility;
