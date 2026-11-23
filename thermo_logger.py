@@ -25,7 +25,7 @@ import os
 import sys
 import time
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 VID = 0x0C45
 CMD_READ = bytes([0x01, 0x80, 0x33, 0x01, 0x00, 0x00, 0x00, 0x00])
