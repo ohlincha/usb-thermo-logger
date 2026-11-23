@@ -356,8 +356,19 @@ class App:
             legend_y += 16
 
 
+def set_window_icon(root):
+    """The program's icon in the title bar, task bar and dock (icon.png next to this file)."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    try:
+        root._icon = tk.PhotoImage(file=os.path.join(base, "icon.png"))
+        root.iconphoto(True, root._icon)
+    except (tk.TclError, OSError):
+        pass
+
+
 def main():
-    root = tk.Tk()
+    root = tk.Tk(className="usb-thermo-logger")
+    set_window_icon(root)
     App(root)
     root.mainloop()
 
