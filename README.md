@@ -23,7 +23,8 @@ Installers are attached to each [release](https://github.com/ohlincha/usb-thermo
 - **macOS:** `UsbThermoLogger-macOS.dmg`: drag *USB Thermo Logger* to Applications. The app is not notarised: the
   first time, right-click it and choose **Open** (macOS 15: System Settings → Privacy & Security → Open Anyway).
 - **Linux (Debian/Ubuntu):** `sudo apt install ./usb-thermo-logger_<version>_all.deb` (installs a udev rule, so
-  no root is needed; replug the sensors afterwards). Other distributions: run `thermo_logger_gui.py` with Python 3
+  no root is needed: any user logged in at the computer can read the sensors, and over SSH members of the
+  `plugdev` group; replug the sensors afterwards). Other distributions: run `thermo_logger_gui.py` with Python 3
   and Tk, and install the rule: `sudo cp 70-usb-thermo-logger.rules /etc/udev/rules.d/ && sudo udevadm control --reload`.
 
 ## Use
