@@ -6,6 +6,11 @@ Windows, macOS and Linux. Pure Python standard library (Tk GUI); no drivers or p
 *TEMPer is a trademark of PCsensor. This project is independent and not affiliated with or endorsed by
 PCsensor; the name is used only to describe compatible hardware.*
 
+![USB Thermo Logger with two sensors (simulated readings)](docs/screenshot.png)
+
+**User manual:** [docs/MANUAL.md](docs/MANUAL.md), printable as
+[docs/UsbThermoLogger-Manual.pdf](docs/UsbThermoLogger-Manual.pdf), and in the program under *Help ▸ Manual*.
+
 | USB ID | Device | Firmware (USB product string) | Reads |
 |---|---|---|---|
 | 0c45:7401 | TEMPer | TEMPerV1.4 | temperature |
@@ -61,6 +66,13 @@ big-endian values from byte 2:
   hygrometer).
 - **TH1000iso (V1.5):** bytes 2–3 = internal temperature × 256; bytes 4–5 and 6–7 = the two thermocouple
   inputs, `0f ff` without a probe. The probe scale is not confirmed yet; readings with a probe are welcome.
+
+## Building
+
+Pushing a tag `vX.Y.Z` makes GitHub Actions build the installers (`.github/workflows/build.yml`);
+`packaging/linux/build_deb.sh` builds the `.deb` locally. After editing `docs/MANUAL.md`, run
+`tools/manual_pdf.sh` (needs pandoc and Chrome) to regenerate `docs/MANUAL.html` (shipped with the program)
+and the PDF, and commit both.
 
 ## License
 

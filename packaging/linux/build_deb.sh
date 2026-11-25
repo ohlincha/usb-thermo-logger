@@ -9,6 +9,8 @@ install -Dm644 thermo_logger.py   "$PKG/usr/lib/usb-thermo-logger/thermo_logger.
 install -Dm644 thermo_logger_gui.py "$PKG/usr/lib/usb-thermo-logger/thermo_logger_gui.py"
 install -Dm644 70-usb-thermo-logger.rules "$PKG/usr/lib/udev/rules.d/70-usb-thermo-logger.rules"
 install -Dm644 icon.png           "$PKG/usr/lib/usb-thermo-logger/icon.png"
+install -Dm644 docs/MANUAL.html   "$PKG/usr/lib/usb-thermo-logger/docs/MANUAL.html"
+install -Dm644 docs/UsbThermoLogger-Manual.pdf "$PKG/usr/share/doc/usb-thermo-logger/UsbThermoLogger-Manual.pdf"
 install -Dm644 icon.png           "$PKG/usr/share/icons/hicolor/256x256/apps/usb-thermo-logger.png"
 install -Dm644 packaging/icon.svg "$PKG/usr/share/icons/hicolor/scalable/apps/usb-thermo-logger.svg"
 install -Dm644 packaging/linux/usb-thermo-logger.desktop "$PKG/usr/share/applications/usb-thermo-logger.desktop"
